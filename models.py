@@ -3,6 +3,7 @@ import torch
 from torch import Tensor
 from typing import Optional, Callable, Tuple
 
+
 class MultiLayerPerceptron(torch.nn.Module):
   """
   Simple multilayer perceptron model class with one hidden layer.
@@ -351,6 +352,8 @@ class HebbianBackpropMultiLayerPerceptron(MultiLayerPerceptron):
 
     return y_pred
 
+
+
 class FeedbackAlignmentFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx: torch.autograd.function.FunctionCtx,
@@ -386,6 +389,7 @@ class FeedbackAlignmentFunction(torch.autograd.Function):
 
         # Save tensors needed for backward pass
         ctx.save_for_backward(input, weight, bias, output, feedback_weight)
+        ctx.nonlinearity = nonlinearity
 
         return output
 
@@ -404,9 +408,31 @@ class FeedbackAlignmentFunction(torch.autograd.Function):
         """
         # Retrieve saved tensors
         input, weight, bias, output, feedback_weight = ctx.saved_tensors
-
+        nonlinearity = ctx.nonlinearity
         # Initialize gradients
         grad_input = grad_weight = grad_bias = None
+
+
+        # Calculate activation derivative
+        if nonlinearity:
+            if isinstance(nonlinearity, torch.nn.ReLU):
+                act_deriv = (output > 0).float()
+            elif isinstance(nonlinearity, torch.nn.Sigmoid):
+                act_deriv = output * (1 - output)
+            elif isinstance(nonlinearity, torch.nn.Tanh):
+                act_deriv = 1 - output.pow(2)
+            elif isinstance(nonlinearity, torch.nn.Softmax):
+                # This is not the actual derivative of softmax but a simplified version
+                # The correct way to handle softmax with cross-entropy is in the loss function
+                act_deriv = output * (1 - output)  # Simplified, use with caution
+            else:
+                raise NotImplementedError(f"Derivative not implemented for {nonlinearity}")
+        else:
+            act_deriv = torch.ones_like(output)
+
+        # Compute the derivative of the activation function if nonlinearity is provided
+        if nonlinearity is not None:
+            grad_output = grad_output * (act_deriv * (1 - act_deriv))  # Assuming sigmoid nonlinearity
 
         # Compute input gradient using feedback weights
         if ctx.needs_input_grad[0]:
@@ -465,6 +491,8 @@ class FeedbackAlignmentMultiLayerPerceptron(MultiLayerPerceptron):
         )
         return y_pred
 
+
+
 class KolenPollackFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx: torch.autograd.function.FunctionCtx,
@@ -479,29 +507,59 @@ class KolenPollackFunction(torch.autograd.Function):
         if nonlinearity is not None:
             output = nonlinearity(output)
         ctx.save_for_backward(input, forward_weight, backward_weight, bias, output)
+        ctx.nonlinearity = nonlinearity  # Added this line
         return output
+
+    @staticmethod
+    def act_deriv(self, activity):
+        """
+        Calculate the derivative of some activations with respect to the inputs
+        """
+        if self.activation == 'sigmoid':
+            derivative = activity * (1 - activity)
+        elif self.activation == 'ReLU':
+            derivative = 1.0 * (activity > 1)
+        else:
+            raise Exception("Unknown activation function")
+        return derivative
 
     @staticmethod
     def backward(ctx: torch.autograd.function.FunctionCtx,
                  grad_output: Tensor) -> Tuple[Optional[Tensor], ...]:
         input, forward_weight, backward_weight, bias, output = ctx.saved_tensors
         grad_input = grad_forward_weight = grad_backward_weight = grad_bias = None
+        nonlinearity = ctx.nonlinearity  # Added this line
 
-        # Compute input gradient using backward weights
+        # Calculate activation derivative
+        if nonlinearity:
+            if isinstance(nonlinearity, torch.nn.ReLU):
+                act_deriv = (output > 0).float()
+            elif isinstance(nonlinearity, torch.nn.Sigmoid):
+                act_deriv = output * (1 - output)
+            elif isinstance(nonlinearity, torch.nn.Tanh):
+                act_deriv = 1 - output.pow(2)
+            elif isinstance(nonlinearity, torch.nn.Softmax):
+                # This is not the actual derivative of softmax but a simplified version
+                # The correct way to handle softmax with cross-entropy is in the loss function
+                act_deriv = output * (1 - output)  # Simplified, use with caution
+            else:
+                raise NotImplementedError(f"Derivative not implemented for {nonlinearity}")
+        else:
+            act_deriv = torch.ones_like(output)
+
+        # Modified gradient calculations
         if ctx.needs_input_grad[0]:
             grad_input = grad_output.mm(backward_weight.t())
 
-        # Compute forward weight gradient
         if ctx.needs_input_grad[1]:
-            grad_forward_weight = grad_output.t().mm(input)
+            error = grad_output * act_deriv
+            grad_forward_weight = error.t().mm(input)
 
-        # Compute backward weight gradient
         if ctx.needs_input_grad[2]:
-            grad_backward_weight = input.t().mm(grad_output)
+            grad_backward_weight = input.t().mm(grad_output * act_deriv)
 
-        # Compute bias gradient if bias is used
         if bias is not None and ctx.needs_input_grad[3]:
-            grad_bias = grad_output.sum(0)
+            grad_bias = (grad_output * act_deriv).sum(0)
 
         return grad_input, grad_forward_weight, grad_backward_weight, grad_bias, None
 
@@ -511,6 +569,7 @@ class KolenPollackMultiLayerPerceptron(MultiLayerPerceptron):
         # Initialize separate backward weights for each layer
         self.backward_lin1 = torch.nn.Parameter(torch.randn(self.num_inputs, self.num_hidden))
         self.backward_lin2 = torch.nn.Parameter(torch.randn(self.num_hidden, self.num_outputs))
+
 
     def forward(self, X: Tensor, y: Optional[Tensor] = None) -> Tensor:
         # First layer
@@ -530,3 +589,6 @@ class KolenPollackMultiLayerPerceptron(MultiLayerPerceptron):
             self.softmax
         )
         return y_pred
+
+
+

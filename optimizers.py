@@ -4,7 +4,7 @@ class BasicOptimizer(torch.optim.Optimizer):
   """
   Simple optimizer class based on the SGD optimizer.
   """
-  def __init__(self, params, lr=0.01, weight_decay=0):
+  def __init__(self, params, lr:float = 0.01, weight_decay:float = 0):
     """
     Initializes a basic optimizer object.
 
@@ -44,10 +44,11 @@ class BasicOptimizer(torch.optim.Optimizer):
             # apply gradient-based update
             p.data.add_(p.grad, alpha=-group["lr"])
 
+
 class KolenPollackOptimizer(BasicOptimizer):
     def __init__(self, params, lr: float = 0.01, weight_decay: float = 0):
         super().__init__(params, lr, weight_decay)
-        self.param_dict = dict(params)
+        self.param_dict = {name: param for name, param in params}
 
     def step(self):
         super().step()  # Perform the standard optimization step
@@ -56,5 +57,6 @@ class KolenPollackOptimizer(BasicOptimizer):
         for name, param in self.param_dict.items():
             if 'backward' in name:
                 forward_name = name.replace('backward_', '')
-                forward_param = self.param_dict[forward_name]
-                param.data.copy_(forward_param.data)
+                forward_param = self.param_dict.get(forward_name)
+                if forward_param is not None:
+                    param.data.copy_(forward_param.data)
