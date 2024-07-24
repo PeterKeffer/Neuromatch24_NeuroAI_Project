@@ -432,7 +432,7 @@ class FeedbackAlignmentFunction(torch.autograd.Function):
 
         # Compute the derivative of the activation function if nonlinearity is provided
         if nonlinearity is not None:
-            grad_output = grad_output * (act_deriv * (1 - act_deriv))  # Assuming sigmoid nonlinearity
+            grad_output = grad_output * act_deriv
 
         # Compute input gradient using feedback weights
         if ctx.needs_input_grad[0]:
@@ -510,18 +510,7 @@ class KolenPollackFunction(torch.autograd.Function):
         ctx.nonlinearity = nonlinearity  # Added this line
         return output
 
-    @staticmethod
-    def act_deriv(self, activity):
-        """
-        Calculate the derivative of some activations with respect to the inputs
-        """
-        if self.activation == 'sigmoid':
-            derivative = activity * (1 - activity)
-        elif self.activation == 'ReLU':
-            derivative = 1.0 * (activity > 1)
-        else:
-            raise Exception("Unknown activation function")
-        return derivative
+
 
     @staticmethod
     def backward(ctx: torch.autograd.function.FunctionCtx,
